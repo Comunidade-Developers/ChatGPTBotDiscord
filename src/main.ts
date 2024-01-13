@@ -1,13 +1,34 @@
-import { CacheType, Client, Events, GatewayIntentBits, Interaction, SlashCommandBuilder } from 'discord.js';
+import {
+  CacheType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  IntentsBitField,
+  Interaction,
+  Message,
+  SlashCommandBuilder
+} from 'discord.js';
+
 import OpenAI from "openai";
-import { config } from 'dotenv';
-config();
+import {
+  ChatCompletionMessageParam
+} from 'openai/resources';
+
+import 'dotenv/config';
+
 
 const openai = new OpenAI({
   apiKey: process.env.CHAT_GPT_KEY
 });
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    IntentsBitField.Flags.Guilds,
+    IntentsBitField.Flags.GuildMessages,
+    IntentsBitField.Flags.MessageContent,
+  ]
+});
 
 client.once(Events.ClientReady, (c) => {
   console.log('Ready!');
@@ -22,22 +43,53 @@ client.once(Events.ClientReady, (c) => {
 client.on(Events.InteractionCreate, async (interaction: Interaction<CacheType>) => {
   try {
     if (!interaction.isChatInputCommand()) return;
-    const { commandName } = interaction;
+    const { commandName, channel, options } = interaction;
     if (commandName !== 'chat') return;
 
-    const [{ value }] = interaction.options.data;
+    const conversation: Array<ChatCompletionMessageParam> = [
+      {
+        role: 'system',
+        content: 'You are a friendly chatbot.'
+      }
+    ];
 
-    const completion = await openai.chat.completions.create({
-      messages: [
-        { "role": "system", "content": "You are a helpful assistant designed to output text." },
-        { "role": "user", "content": `${value}` }
-      ],
-      model: "gpt-3.5-turbo",
-    });
+    const prevMessages = await channel?.messages.fetch({ limit: 15 });
+    prevMessages?.reverse();
 
-    const data = String(completion.choices[0].message.content);
+    const [{ value }] = options.data;
 
-    await interaction.reply({ content: `${data}`, fetchReply: true })
+    prevMessages?.forEach(async (message: Message<boolean>) => {
+      if (message.content.startsWith('!')) return;
+      if (message.author.id !== client.user?.id && message.author.bot) return;
+      if (message.author.id == client.user?.id) {
+
+        interaction.reply({ content: "Aguarde que estou pensando..." });
+
+        conversation.push({
+          role: 'assistant',
+          content: String(value),
+          name: message.author.username
+            .replace(/\s+/g, '_')
+            .replace(/[^\w\s]/gi, ''),
+        });
+
+        conversation.push({
+          role: 'user',
+          content: String(value),
+          name: message.author.username
+            .replace(/\s+/g, '_')
+            .replace(/[^\w\s]/gi, ''),
+        });
+      }
+
+      const completion = await openai.chat.completions.create({
+        messages: conversation,
+        model: "gpt-3.5-turbo",
+      });
+
+      const response = String(completion.choices[0].message.content);
+      message.reply({ content: response });
+    })
   } catch(er: any) {
     console.error(er.message)
   }
